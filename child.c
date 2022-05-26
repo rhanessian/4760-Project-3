@@ -24,6 +24,13 @@ void print_error(const char* message){
 
 int semid;
 
+union semun {
+	int val;                /* value for SETVAL */
+	struct semid_ds *buf;   /* buffer for IPC_STAT & IPC_SET */
+	unsigned short *array;  /* array for GETALL & SETALL */
+	struct seminfo *__buf;  /* buffer for IPC_INFO */
+};
+
 void log_event(int num, const char* message) {
 	char filename[32];
 	snprintf(filename, sizeof(filename), "logfile.%d", num);

@@ -12,26 +12,29 @@
 #include <time.h>
 #include <stdbool.h>
 #include <getopt.h>
-#include "structure.h"
+#include <sys/sem.h>
+#define MAXPIDS 20
 
 pid_t pids[MAXPIDS];
 
-int shmid, semid;
-struct shrd_mem *shm;
+int semid;
+
+const char* program_name;
+
+void print_error(const char* message){
+	char buffer[128];
+	snprintf(buffer, sizeof(buffer), "%s:%s", program_name, message);
+	perror(buffer);
+}
 
 void sighandler(int signum) {
-	printf("Caught signal %d, coming out...\n", signum);
+	printf("Caught signal %d, exiting...\n", signum);
 	for (int i = 0; i < MAXPIDS; i++)
 		if (pids[i] != 0)	
 			kill(pids[i], SIGCHLD);
-	shmdt(shm);
-	shmctl(shmid, IPC_RMID, NULL);
 	union semun u;
 	if (semctl(semid, 0, IPC_RMID, u) == -1) 
-    {
-        perror("semctl");
-        exit(1); 
-    }
+    	print_error("semctl");
 	exit(1);
 }
 
@@ -55,6 +58,7 @@ int find_space(void) {
 }
 
 int main (int argc, char *argv[]) {
+	program_name = argv[0];
 	signal(SIGINT, sighandler);
 	signal(SIGCHLD, handle_child);
 	signal(SIGALRM, sighandler);
@@ -96,16 +100,13 @@ int main (int argc, char *argv[]) {
 	
 	printf("ss = %d, n = %d\n", ss, n);
 	
-	key_t key_glock = ftok("master.c", 420);
-	shmid = shmget(key_glock, sizeof(struct shrd_mem), 0666 | IPC_CREAT);
-	shm = shmat(shmid, 0, 0);
 	key_t key_sem = ftok("master.c", 987);
-	semid = semget(key_sem, 1, 0666 | IPC_CREAT);
-	
+	if ((semid = semget(key_sem, 1, 0666 | IPC_CREAT)) < 0)
+		print_error("semget");
 	union semun u;
 	u.val = 1;
 	if (semctl(semid, 0, SETVAL, u) < 0) { 
-		#warning DO ERROR HANDLING!
+		print_error("semctl");
 	}
 	
 	pid_t pid;
@@ -122,24 +123,18 @@ int main (int argc, char *argv[]) {
 			char *args[] = {"./child", string_num, 0};
 			char *env[] = { 0 };
 			execve("./child", args, env);
-			perror("execve");
+			print_error("execve");
 			exit(1);
 		} else {
 			pids[ind] = pid;
 		}
 	}	
 		
-		while(wait(NULL) > 0)
-			;
+	while(wait(NULL) > 0)
+	;
 
-	shmdt(shm);
-	shmctl(shmid, IPC_RMID, NULL);
-	
 	if (semctl(semid, 0, IPC_RMID, u) == -1) 
-    {
-        perror("semctl");
-        exit(1); 
-    }
+   		print_error("semctl");
 	
 	return 0;
 }

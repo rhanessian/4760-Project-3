@@ -11,36 +11,18 @@
 #include <signal.h>
 #include <time.h>
 #include <stdbool.h>
-#include "structure.h"
+#include <sys/sem.h>
+#define MAXPIDS 20
 
-struct shrd_mem *shm;
+const char* program_name;
+
+void print_error(const char* message){
+	char buffer[128];
+	snprintf(buffer, sizeof(buffer), "%s:%s", program_name, message);
+	perror(buffer);
+}
+
 int semid;
-
-void sighandler(int signum) {
-	printf("Child: Caught signal %d\n", signum);
-	shmdt(shm);
-	exit(1);
-}
-
-void enter_cs(int num){
-	shm->choosing[num] = true;
-	int max = 0;
-	for (int i = 0; i < MAXPIDS; i++){
-		if (shm->numbers[i] > max)
-			max = shm->numbers[i];
-	}
-	shm->numbers[num] = max + 1;
-	shm->choosing[num] = false;
-	
-	for (int k = 0; k < MAXPIDS; k++){
-		while (shm->choosing[k])
-			;
-		while (shm->numbers[k] != 0 && 
-		       (shm->numbers[k] < shm->numbers[num]) ||
-		       (shm->numbers[k] == shm->numbers[num] && k < num))
-		    ;
-	}
-}
 
 void log_event(int num, const char* message) {
 	char filename[32];
@@ -57,16 +39,8 @@ void log_event(int num, const char* message) {
 }
 
 int main (int argc, char *argv[]) {
-	signal(SIGINT, sighandler);
 	
 	srand(time(NULL));
-
-	int shmid;
-	
-	key_t key_glock = ftok("master.c", 420);
-	
-	shmid = shmget(key_glock, sizeof(struct shrd_mem), 0);
-	shm = shmat(shmid, 0, 0);
 	
 	key_t key_sem = ftok("master.c", 987);
 	semid = semget(key_sem, 1, 0);
@@ -79,11 +53,17 @@ int main (int argc, char *argv[]) {
     
 	printf("%ld\n", (long)getpid());
 	
-	for(int i = 0; i < 1; i++) {
+	struct sembuf p = { 0, -1, SEM_UNDO};
+	struct sembuf v = { 0, +1, SEM_UNDO};
+	
+	for(int i = 0; i < 3; i++) {
 		log_event(num, "Entering critical section...");
+		
 		if (semop(semid, &p, 1) < 0) {
-    /* error handling code */
+			print_error("semop");
+			exit(1);
 		}
+		
 		log_event(num, "Entered critical section.");
 		sleep(1 + rand()%5);
 		timer = time(NULL);
@@ -94,21 +74,19 @@ int main (int argc, char *argv[]) {
 		fclose(f);
 		sleep(1 + rand()%5);
 		log_event(num, "Exiting critical section...");
+		
 		if (semop(semid, &v, 1) < 0) {
-    /* error handling code */
+    		print_error("semop");
+    		exit(1);
 		}
+		log_event(num, "Exited.");
 	}
 	
-	sleep(2);
-	shmdt(shm);
-	struct sembuf sb = {0, -1, 0}; /* set to allocate resource */
-	sb.sem_op = 1; /* free resource */ 
-    if (semop(semid, &sb, 1) == -1) 
-    {
-        perror("semop");
-        exit(1); 
-        
+	struct sembuf sb = {0, 1, 0}; 
+	
+    if (semop(semid, &sb, 1) == -1) {
+        print_error("semop");  
     }
-    printf("Unlocked\n");
+
 	return 0;
 }		
